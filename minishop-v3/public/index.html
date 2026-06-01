@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mini Shop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">Mini<span>Shop</span></div>
+    <div class="header-actions">
+      <button class="header-btn" id="userToggle" aria-label="Account">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+        </svg>
+        <img class="header-btn__avatar" id="headerAvatar" alt="" />
+      </button>
+      <button class="header-btn" id="cartToggle" aria-label="Open cart">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007zM8.625 10.5a.375.375 0 11-.75 0 .375.375 0 01.75 0zm7.5 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+        </svg>
+        <span class="cart-badge" id="cartBadge">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- STORE (listing) -->
+  <div id="storeView">
+    <nav class="filters" id="filters"></nav>
+    <ul class="product-grid" id="productGrid">
+      <li class="loading"><div class="spinner"></div>Loading products...</li>
+    </ul>
+  </div>
+
+  <!-- PRODUCT DETAIL -->
+  <div id="productDetail" class="product-detail" style="display:none"></div>
+
+  <!-- CART DRAWER -->
+  <div class="drawer-overlay" id="cartOverlay"></div>
+  <aside class="drawer" id="cartDrawer">
+    <div class="drawer__header">
+      <h2>Your Cart</h2>
+      <button class="drawer__close" id="cartClose" aria-label="Close cart">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+      </button>
+    </div>
+    <div class="drawer__body" id="cartBody"></div>
+    <div class="drawer__footer" id="cartFooter"></div>
+  </aside>
+
+  <!-- USER DRAWER -->
+  <div class="drawer-overlay" id="userOverlay"></div>
+  <aside class="drawer" id="userDrawer">
+    <div class="drawer__header">
+      <h2 id="userDrawerTitle">Account</h2>
+      <button class="drawer__close" id="userClose" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+      </button>
+    </div>
+    <div class="drawer__body" id="userBody"></div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+  <input type="file" id="avatarInput" accept="image/*" style="display:none" />
+
+  <script src="index.js" type="module"></script>
+</body>
+</html>
