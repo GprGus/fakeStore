@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import User from '../models/User.js';
+import bcrypt from 'bcryptjs';
+import prisma from '../lib/db.js';
+import { formatUser } from '../lib/format.js';
 import { system, database } from '../utils/logger.js';
 
 const router = Router();
@@ -11,32 +13,35 @@ router.post('/register', async (req, res) => {
     system.info(`Registro solicitado: ${username} (${email})`);
 
     if (!username || !email || !password || !phone) {
-      system.warn(`Registro rejeitado: campos obrigatórios faltando`);
+      system.warn('Registro rejeitado: campos obrigatórios faltando');
       return res.status(400).json({ error: 'Username, email, password and phone are required' });
     }
 
-    const exists = await User.findOne({ $or: [{ username }, { email }] });
+    const exists = await prisma.user.findFirst({
+      where: { OR: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }] },
+    });
     if (exists) {
       const field = exists.username === username.toLowerCase() ? 'Username' : 'Email';
       database.warn(`Registro duplicado: ${field} "${username}" já existe`);
       return res.status(409).json({ error: `${field} already taken` });
     }
 
-    const user = await User.create({
-      username, email, password, phone,
-      name: { firstname: firstname || '', lastname: lastname || '' },
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        username: username.toLowerCase(),
+        email: email.toLowerCase(),
+        password: hashed,
+        firstname: firstname || '',
+        lastname: lastname || '',
+        phone,
+      },
     });
 
-    database.info(`Usuário criado: ${user.username} (${user._id})`, {
-      userId: user._id.toString(),
-      username: user.username,
-      email: user.email,
-    });
-
-    res.status(201).json({ user: user.toPublic() });
+    database.info(`Usuário criado: ${user.username} (${user.id})`);
+    res.status(201).json({ user: formatUser(user) });
   } catch (err) {
     system.error(`Erro no registro: ${err.message}`);
-    database.error(`Falha ao criar usuário: ${err.message}`);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -51,20 +56,20 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    const user = await User.findOne({ username: username.toLowerCase() });
+    const user = await prisma.user.findUnique({ where: { username: username.toLowerCase() } });
     if (!user) {
       database.warn(`Login falhou: usuário "${username}" não encontrado`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const match = await user.comparePassword(password);
+    const match = await bcrypt.compare(password, user.password);
     if (!match) {
       system.warn(`Login falhou: senha incorreta para "${username}"`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    database.info(`Login bem-sucedido: ${user.username} (${user._id})`);
-    res.json({ user: user.toPublic() });
+    database.info(`Login bem-sucedido: ${user.username} (${user.id})`);
+    res.json({ user: formatUser(user) });
   } catch (err) {
     system.error(`Erro no login: ${err.message}`);
     res.status(500).json({ error: 'Server error' });

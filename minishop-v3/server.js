@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
-import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 import { system, database, requestLogger } from './utils/logger.js';
+import prisma from './lib/db.js';
+
 import authRoutes     from './routes/auth.js';
 import userRoutes     from './routes/user.js';
 import orderRoutes    from './routes/orders.js';
@@ -12,7 +14,6 @@ import productRoutes  from './routes/products.js';
 import reviewRoutes   from './routes/reviews.js';
 import categoryRoutes from './routes/categories.js';
 import adminRoutes    from './routes/admin.js';
-import User from './models/User.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -37,7 +38,7 @@ app.get('/admin', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'admin.html'));
 });
 
-// ─── Fallback ───
+// ─── Fallback SPA ───
 app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'index.html'));
 });
@@ -48,44 +49,40 @@ async function seedAdmin() {
   const adminPass  = process.env.ADMIN_PASS  || 'admin123';
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@minishop.com';
 
-  const exists = await User.findOne({ role: 'admin' });
+  const exists = await prisma.user.findFirst({ where: { role: 'admin' } });
   if (!exists) {
-    await User.create({
-      username: adminUser,
-      email: adminEmail,
-      password: adminPass,
-      name: { firstname: 'Admin', lastname: '' },
-      role: 'admin',
+    const hashed = await bcrypt.hash(adminPass, 10);
+    await prisma.user.create({
+      data: {
+        username: adminUser,
+        email: adminEmail,
+        password: hashed,
+        firstname: 'Admin',
+        role: 'admin',
+      },
     });
     system.info(`Admin master criado: ${adminUser} / ${adminPass}`);
   }
 }
 
-// ─── Connect to MongoDB & Start ───
+// ─── Connect to PostgreSQL & Start ───
 async function start() {
-  const uri = process.env.MONGO_URI;
-  if (!uri) {
-    system.error('MONGO_URI não configurado no .env');
+  if (!process.env.DATABASE_URL) {
+    system.error('DATABASE_URL não configurado no .env');
     process.exit(1);
   }
 
-  mongoose.set('debug', (collection, method, query) => {
-    database.debug(`${collection}.${method}`, {
-      query: JSON.parse(JSON.stringify(query || {})),
-    });
-  });
-
   try {
-    await mongoose.connect(uri);
-    database.info('MongoDB Atlas conectado com sucesso');
+    await prisma.$connect();
+    database.info('PostgreSQL conectado com sucesso');
     await seedAdmin();
   } catch (err) {
-    database.error(`Falha ao conectar MongoDB: ${err.message}`);
+    database.error(`Falha ao conectar PostgreSQL: ${err.message}`);
     process.exit(1);
   }
 
   app.listen(PORT, () => {
-    system.info(`MiniShop v2 rodando em http://localhost:${PORT}`);
+    system.info(`MiniShop v3 rodando em http://localhost:${PORT}`);
     system.info(`Admin panel: http://localhost:${PORT}/admin`);
     system.info(`WhatsApp Phone ID: ${process.env.WA_PHONE_ID || 'não configurado'}`);
     if (!process.env.WA_TOKEN) system.warn('WA_TOKEN não configurado');

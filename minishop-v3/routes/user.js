@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import User from '../models/User.js';
+import bcrypt from 'bcryptjs';
+import prisma from '../lib/db.js';
+import { formatUser } from '../lib/format.js';
 import { database } from '../utils/logger.js';
 
 const router = Router();
@@ -7,13 +9,13 @@ const router = Router();
 // ─── GET /api/user/:id ───
 router.get('/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.params.id) } });
     if (!user) {
       database.warn(`Usuário não encontrado: ${req.params.id}`);
       return res.status(404).json({ error: 'User not found' });
     }
-    database.info(`Perfil consultado: ${user.username} (${user._id})`);
-    res.json({ user: user.toPublic() });
+    database.info(`Perfil consultado: ${user.username} (${user.id})`);
+    res.json({ user: formatUser(user) });
   } catch (err) {
     database.error(`Erro ao buscar usuário ${req.params.id}: ${err.message}`);
     res.status(500).json({ error: 'Server error' });
@@ -24,29 +26,27 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { firstname, lastname, phone, address, avatar, newPassword } = req.body;
-    const user = await User.findById(req.params.id);
-    if (!user) {
-      database.warn(`Update falhou: usuário ${req.params.id} não encontrado`);
+    const userId = parseInt(req.params.id);
+
+    const existing = await prisma.user.findUnique({ where: { id: userId } });
+    if (!existing) {
+      database.warn(`Update falhou: usuário ${userId} não encontrado`);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Registra quais campos estão sendo atualizados
+    const data = {};
     const changedFields = [];
-    if (firstname !== undefined) { user.name.firstname = firstname; changedFields.push('firstname'); }
-    if (lastname !== undefined)  { user.name.lastname = lastname; changedFields.push('lastname'); }
-    if (phone !== undefined)     { user.phone = phone; changedFields.push('phone'); }
-    if (address !== undefined)   { user.address = address; changedFields.push('address'); }
-    if (avatar !== undefined)    { user.avatar = avatar; changedFields.push('avatar'); }
-    if (newPassword)             { user.password = newPassword; changedFields.push('password'); }
+    if (firstname !== undefined) { data.firstname = firstname; changedFields.push('firstname'); }
+    if (lastname !== undefined)  { data.lastname = lastname;   changedFields.push('lastname'); }
+    if (phone !== undefined)     { data.phone = phone;         changedFields.push('phone'); }
+    if (address !== undefined)   { data.address = address;     changedFields.push('address'); }
+    if (avatar !== undefined)    { data.avatar = avatar;       changedFields.push('avatar'); }
+    if (newPassword)             { data.password = await bcrypt.hash(newPassword, 10); changedFields.push('password'); }
 
-    await user.save();
+    const user = await prisma.user.update({ where: { id: userId }, data });
 
-    database.info(`Perfil atualizado: ${user.username} (${user._id})`, {
-      userId: user._id.toString(),
-      fieldsChanged: changedFields,
-    });
-
-    res.json({ user: user.toPublic() });
+    database.info(`Perfil atualizado: ${user.username} (${user.id})`, { fieldsChanged: changedFields });
+    res.json({ user: formatUser(user) });
   } catch (err) {
     database.error(`Erro ao atualizar ${req.params.id}: ${err.message}`);
     res.status(500).json({ error: 'Server error' });

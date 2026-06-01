@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import User from '../models/User.js';
-import Order from '../models/Order.js';
-import Product from '../models/Product.js';
-import Review from '../models/Review.js';
+import bcrypt from 'bcryptjs';
+import prisma from '../lib/db.js';
+import { formatUser, formatProduct } from '../lib/format.js';
 import { system, database } from '../utils/logger.js';
 
 const router = Router();
@@ -14,14 +13,14 @@ router.post('/login', async (req, res) => {
     system.info(`Admin login solicitado: ${username}`);
     if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
 
-    const user = await User.findOne({ username: username.toLowerCase(), role: 'admin' });
+    const user = await prisma.user.findFirst({ where: { username: username.toLowerCase(), role: 'admin' } });
     if (!user) { system.warn(`Admin login falhou: "${username}"`); return res.status(401).json({ error: 'Invalid admin credentials' }); }
 
-    const match = await user.comparePassword(password);
+    const match = await bcrypt.compare(password, user.password);
     if (!match) { system.warn(`Admin senha incorreta: "${username}"`); return res.status(401).json({ error: 'Invalid admin credentials' }); }
 
     database.info(`Admin login: ${user.username}`);
-    res.json({ admin: user.toPublic() });
+    res.json({ admin: formatUser(user) });
   } catch (err) {
     system.error(`Erro admin login: ${err.message}`);
     res.status(500).json({ error: 'Server error' });
@@ -31,28 +30,69 @@ router.post('/login', async (req, res) => {
 // ─── GET /api/admin/dashboard ───
 router.get('/dashboard', async (req, res) => {
   try {
-    const totalUsers = await User.countDocuments({ role: 'user' });
-    const totalOrders = await Order.countDocuments();
-    const revenueResult = await Order.aggregate([{ $group: { _id: null, total: { $sum: '$total' } } }]);
-    const totalRevenue = revenueResult[0]?.total || 0;
-    const totalProducts = await Product.countDocuments({ active: true });
-
-    const topBuyers = await Order.aggregate([
-      { $group: { _id: '$userId', totalSpent: { $sum: '$total' }, orderCount: { $sum: 1 } } },
-      { $sort: { totalSpent: -1 } }, { $limit: 3 },
-      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
-      { $unwind: '$user' },
-      { $project: { _id: 0, username: '$user.username', firstname: '$user.name.firstname', lastname: '$user.name.lastname', email: '$user.email', totalSpent: 1, orderCount: 1 } }
+    const [totalUsers, totalOrders, revenueAgg, totalProducts] = await Promise.all([
+      prisma.user.count({ where: { role: 'user' } }),
+      prisma.order.count(),
+      prisma.order.aggregate({ _sum: { total: true } }),
+      prisma.product.count({ where: { active: true } }),
     ]);
+    const totalRevenue = revenueAgg._sum.total || 0;
 
-    const bestSelling = await Order.aggregate([
-      { $unwind: '$items' },
-      { $group: { _id: '$items.title', totalQty: { $sum: '$items.quantity' }, totalRevenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }, image: { $first: '$items.image' } } },
-      { $sort: { totalQty: -1 } }, { $limit: 5 },
-      { $project: { _id: 0, title: '$_id', totalQty: 1, totalRevenue: 1, image: 1 } }
-    ]);
+    // Top 3 compradores
+    const topBuyersRaw = await prisma.order.groupBy({
+      by: ['userId'],
+      _sum: { total: true },
+      _count: { id: true },
+      orderBy: { _sum: { total: 'desc' } },
+      take: 3,
+    });
+    const buyerUsers = await prisma.user.findMany({ where: { id: { in: topBuyersRaw.map(b => b.userId) } } });
+    const userMap = Object.fromEntries(buyerUsers.map(u => [u.id, u]));
+    const topBuyers = topBuyersRaw.map(b => ({
+      username:   userMap[b.userId]?.username  || '',
+      firstname:  userMap[b.userId]?.firstname || '',
+      lastname:   userMap[b.userId]?.lastname  || '',
+      email:      userMap[b.userId]?.email     || '',
+      totalSpent: b._sum.total,
+      orderCount: b._count.id,
+    }));
 
-    const recentOrders = await Order.find().sort({ createdAt: -1 }).limit(10).populate('userId', 'username name email').lean();
+    // 5 produtos mais vendidos (raw SQL para multiplicação price * quantity)
+    const bestSellingRaw = await prisma.$queryRaw`
+      SELECT title, image,
+             CAST(SUM(quantity) AS INTEGER)        AS "totalQty",
+             CAST(SUM(price * quantity) AS FLOAT)  AS "totalRevenue"
+      FROM "OrderItem"
+      GROUP BY title, image
+      ORDER BY "totalQty" DESC
+      LIMIT 5
+    `;
+    const bestSelling = bestSellingRaw.map(r => ({
+      title:        r.title,
+      image:        r.image,
+      totalQty:     Number(r.totalQty),
+      totalRevenue: Number(r.totalRevenue),
+    }));
+
+    // 10 pedidos recentes
+    const recentOrdersRaw = await prisma.order.findMany({
+      take: 10,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user:  { select: { id: true, username: true, firstname: true, lastname: true, email: true } },
+        items: true,
+      },
+    });
+    const recentOrders = recentOrdersRaw.map(o => ({
+      ...o,
+      _id: o.id,
+      userId: o.user ? {
+        _id: o.user.id,
+        username: o.user.username,
+        name: { firstname: o.user.firstname, lastname: o.user.lastname },
+        email: o.user.email,
+      } : null,
+    }));
 
     database.info('Dashboard admin consultado');
     res.json({ stats: { totalUsers, totalOrders, totalRevenue, totalProducts }, topBuyers, bestSelling, recentOrders });
@@ -62,21 +102,24 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
-// ─── GET /api/admin/products ─── (inclui inativos, com categoria populada e rating)
+// ─── GET /api/admin/products ─── (inclui inativos)
 router.get('/products', async (req, res) => {
   try {
-    const products = await Product.find().populate('category', 'name').sort({ createdAt: -1 }).lean();
+    const products = await prisma.product.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { category: true },
+    });
 
-    // Compute ratings
     const enriched = await Promise.all(products.map(async (p) => {
-      const result = await Review.aggregate([
-        { $match: { productId: p._id } },
-        { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
-      ]);
+      const { _avg, _count } = await prisma.review.aggregate({
+        where: { productId: p.id },
+        _avg: { rating: true },
+        _count: { id: true },
+      });
       return {
-        ...p,
+        ...formatProduct(p),
         categoryName: p.category?.name || 'uncategorized',
-        rating: { rate: Math.round((result[0]?.avg || 0) * 10) / 10, count: result[0]?.count || 0 },
+        rating: { rate: Math.round((_avg.rating || 0) * 10) / 10, count: _count.id },
       };
     }));
 
